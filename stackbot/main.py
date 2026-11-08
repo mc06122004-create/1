@@ -1,6 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.1.8 (Fast Perfect Edge-Match & Instant Response)
+Версия: 1.1.9 (Perfect Match with 4s Cooldown Edition)
 Платформа: Windows 10 / 11 (x64)
 """
 
@@ -20,15 +20,13 @@ pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = False
 
 
-class StackBotEngineV118:
-    """Движок идеального быстрого клика с защитой от мгновенного фантома."""
+class StackBotEngineV119:
+    """Тот самый идеальный движок предсказания из версии 1.1.6 + 4 секунды защиты."""
     def __init__(self):
         self.score_count = 0
         self.last_click_time = 0
         self.prev_m_center = None
         self.velocity = 0.0
-        self.last_block_id = None
-        self.frame_count_for_block = 0
 
     def process_frame(self, frame_bgr):
         if frame_bgr is None or frame_bgr.size == 0:
@@ -52,7 +50,7 @@ class StackBotEngineV118:
                 rectangles.append((x, y, w, h))
 
         should_click = False
-        status_text = "Работает..."
+        status_text = "Идеальный поиск блоков..."
 
         if len(rectangles) >= 2:
             rectangles.sort(key=lambda r: r[1])
@@ -66,18 +64,6 @@ class StackBotEngineV118:
             if by >= my + mh - 10 and abs(mw - bw) < bw * 0.6:
                 m_center = mx + mw / 2.0
                 b_center = bx + bw / 2.0
-
-                # Идентификатор текущего блока по его ширине и высоте
-                current_block_id = (int(mw), int(mh))
-                if self.last_block_id != current_block_id:
-                    self.last_block_id = current_block_id
-                    self.frame_count_for_block = 0
-                else:
-                    self.frame_count_for_block += 1
-
-                # Пропускаем только самый первый кадр спавна (защита от фантомного клика)
-                if self.frame_count_for_block < 2:
-                    return debug_frame, False, {"score": self.score_count, "status": "Спавн..."}
 
                 # Расчет скорости движения платформы для упреждения
                 if self.prev_m_center is not None:
@@ -95,12 +81,16 @@ class StackBotEngineV118:
                 status_text = f"Смещение: {diff:.1f}px"
 
                 now = time.time()
-                # Без долгих пауз: быстрый отклик для идеального строительства
-                if (now - self.last_click_time) > 0.18:
+                # СТРОГАЯ ЗАЩИТА: после успешного клика бот «спит» 4.0 секунды, 
+                # пока новый блок полностью не заспавнится, не долетит и не встанет на место!
+                if (now - self.last_click_time) > 4.0:
+                    # Ювелирное условие совпадения
                     if diff <= 2.0:
                         should_click = True
                         self.last_click_time = now
                         self.score_count += 1
+                else:
+                    status_text = f"Пауза после клика ({int(4.0 - (now - self.last_click_time))}с)..."
 
         return debug_frame, should_click, {"score": self.score_count, "status": status_text}
 
@@ -108,11 +98,11 @@ class StackBotEngineV118:
 class StackBotVisualApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("StackBot v1.1.8 — Fast & Perfect")
+        self.root.title("StackBot v1.1.9 — 4s Cooldown Perfect")
         self.root.geometry("440x560")
         self.root.wm_attributes("-topmost", True)
         
-        self.engine = StackBotEngineV118()
+        self.engine = StackBotEngineV119()
         self.is_running = False
         self.running_loop = True
 
@@ -132,7 +122,7 @@ class StackBotVisualApp:
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.8 (Fast Perfect Match)", font=("Segoe UI", 10, "bold"))
+        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.9 (4s Safe Cooldown)", font=("Segoe UI", 10, "bold"))
         title_lbl.pack(anchor=tk.W, pady=(0, 5))
 
         btn_frame = ttk.Frame(main_frame)
