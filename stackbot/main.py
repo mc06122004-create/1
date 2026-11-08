@@ -1,6 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.1.7 (Spawn-Protection & Perfect Edge-Match Edition)
+Версия: 1.1.8 (Fast Perfect Edge-Match & Instant Response)
 Платформа: Windows 10 / 11 (x64)
 """
 
@@ -20,15 +20,15 @@ pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = False
 
 
-class StackBotEngineV117:
-    """Интеллектуальный движок с защитой от мгновенного клика при спавне."""
+class StackBotEngineV118:
+    """Движок идеального быстрого клика с защитой от мгновенного фантома."""
     def __init__(self):
         self.score_count = 0
         self.last_click_time = 0
         self.prev_m_center = None
         self.velocity = 0.0
-        self.last_block_signature = None
-        self.spawn_time = 0.0
+        self.last_block_id = None
+        self.frame_count_for_block = 0
 
     def process_frame(self, frame_bgr):
         if frame_bgr is None or frame_bgr.size == 0:
@@ -52,7 +52,7 @@ class StackBotEngineV117:
                 rectangles.append((x, y, w, h))
 
         should_click = False
-        status_text = "Идеальное строительство..."
+        status_text = "Работает..."
 
         if len(rectangles) >= 2:
             rectangles.sort(key=lambda r: r[1])
@@ -67,15 +67,17 @@ class StackBotEngineV117:
                 m_center = mx + mw / 2.0
                 b_center = bx + bw / 2.0
 
-                # Отслеживаем появление нового блока (смена этажа / подпись по размеру и позиции Y)
-                block_signature = (int(mw), int(my))
-                if self.last_block_signature != block_signature:
-                    # Это новый блок! Включаем защиту от спавна
-                    self.spawn_time = time.time()
-                    self.last_block_signature = block_signature
+                # Идентификатор текущего блока по его ширине и высоте
+                current_block_id = (int(mw), int(mh))
+                if self.last_block_id != current_block_id:
+                    self.last_block_id = current_block_id
+                    self.frame_count_for_block = 0
+                else:
+                    self.frame_count_for_block += 1
 
-                # Защита от спавна: первые 0.25 секунды после появления нового блока кликать СТРОГО ЗАПРЕЩЕНО
-                is_safe_from_spawn = (time.time() - self.spawn_time) > 0.25
+                # Пропускаем только самый первый кадр спавна (защита от фантомного клика)
+                if self.frame_count_for_block < 2:
+                    return debug_frame, False, {"score": self.score_count, "status": "Спавн..."}
 
                 # Расчет скорости движения платформы для упреждения
                 if self.prev_m_center is not None:
@@ -93,14 +95,12 @@ class StackBotEngineV117:
                 status_text = f"Смещение: {diff:.1f}px"
 
                 now = time.time()
-                if is_safe_from_spawn and (now - self.last_click_time) > 0.22:
-                    # Идеальное условие соприкосновения
-                    if diff <= 1.8:
+                # Без долгих пауз: быстрый отклик для идеального строительства
+                if (now - self.last_click_time) > 0.18:
+                    if diff <= 2.0:
                         should_click = True
                         self.last_click_time = now
                         self.score_count += 1
-                elif not is_safe_from_spawn:
-                    status_text = "Спавн-защита..."
 
         return debug_frame, should_click, {"score": self.score_count, "status": status_text}
 
@@ -108,11 +108,11 @@ class StackBotEngineV117:
 class StackBotVisualApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("StackBot v1.1.7 — Protected")
+        self.root.title("StackBot v1.1.8 — Fast & Perfect")
         self.root.geometry("440x560")
         self.root.wm_attributes("-topmost", True)
         
-        self.engine = StackBotEngineV117()
+        self.engine = StackBotEngineV118()
         self.is_running = False
         self.running_loop = True
 
@@ -132,7 +132,7 @@ class StackBotVisualApp:
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.7 (Spawn-Protected)", font=("Segoe UI", 10, "bold"))
+        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.8 (Fast Perfect Match)", font=("Segoe UI", 10, "bold"))
         title_lbl.pack(anchor=tk.W, pady=(0, 5))
 
         btn_frame = ttk.Frame(main_frame)
