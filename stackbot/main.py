@@ -1,6 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.0.7 (Stable Overlay & Center-Click Edition)
+Версия: 1.0.9 (Perfect Edge-Match Edition)
 """
 
 import sys
@@ -13,124 +13,87 @@ import cv2
 import numpy as np
 import pyautogui
 import keyboard
-from collections import deque
 
 pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = False
 
 
-class StackBotEngineV10:
+class StackBotEngineV109:
+    """Движок идеального соприкосновения краев платформы и основания."""
     def __init__(self):
-        self.prev_platform_x = None
-        self.platform_direction = 0
-        self.current_speed = 0.0
-        self.last_frame_time = time.time()
-        self.lost_frames_count = 0
-        self.history_x = deque(maxlen=4)
         self.score_count = 0
         self.last_click_time = 0
-        self.previous_base_width = None
+        self.prev_platform_x = None
+        self.direction = 1
 
-    def process_frame(self, frame_bgr, click_offset_factor=0.6):
+    def process_frame(self, frame_bgr):
         if frame_bgr is None or frame_bgr.size == 0:
-            return False, {"status": "Нет кадра", "score": self.score_count}
+            return False, {"score": self.score_count, "status": "Нет кадра"}
 
         height, width, _ = frame_bgr.shape
-        now = time.time()
-        dt = now - self.last_frame_time
-        self.last_frame_time = now if dt > 0 else 0.033
-
+        
+        # Переводим в градации серого и находим контрастные блоки
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        thresh = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, 11, 2
-        )
-
-        kernel = np.ones((3, 3), np.uint8)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-
+        _, thresh = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY)
+        
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         rectangles = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 250:
+            if area < 200:
                 continue
-            
             x, y, w, h = cv2.boundingRect(cnt)
-            aspect_ratio = w / float(h)
-            
-            if aspect_ratio > 1.05:
-                rectangles.append((x, y, w, h, area))
-
-        base_rect = None
-        platform_rect = None
-
-        if rectangles:
-            rectangles.sort(key=lambda r: r[1], reverse=True)
-            base_rect = rectangles[0][:4]
-
-            bx, by, bw, bh = base_rect
-            if self.previous_base_width is not None:
-                if bw > self.previous_base_width * 1.5:
-                    self.score_count = 0
-            self.previous_base_width = bw
-
-            for r in rectangles[1:]:
-                if r[1] < base_rect[1] - 3:
-                    if r[2] >= base_rect[2] * 0.3:
-                        platform_rect = r[:4]
-                        break
+            # Отбираем только горизонтальные игровые блоки
+            if w > h * 1.1:
+                rectangles.append((x, y, w, h))
 
         should_click = False
-        telemetry = {
-            "score": self.score_count,
-            "status": "Активен"
-        }
 
-        if base_rect and platform_rect:
-            self.lost_frames_count = 0
-            bx, by, bw, bh = base_rect
-            px, py, pw, ph = platform_rect
+        if len(rectangles) >= 2:
+            # Сортируем снизу вверх по координате Y
+            rectangles.sort(key=lambda r: r[1], reverse=True)
+            
+            base = rectangles[0]       # Нижнее основание
+            platform = rectangles[1]   # Летящая платформа
 
-            raw_platform_center_x = px + pw / 2.0
-            self.history_x.append(raw_platform_center_x)
-            platform_center_x = sum(self.history_x) / len(self.history_x)
-            base_center_x = bx + bw / 2.0
+            bx, by, bw, bh = base
+            px, py, pw, ph = platform
 
+            base_left = bx
+            base_right = bx + bw
+            base_center = bx + bw / 2.0
+
+            plat_left = px
+            plat_right = px + pw
+            plat_center = px + pw / 2.0
+
+            # Определяем направление движения платформы
             if self.prev_platform_x is not None:
-                dx = platform_center_x - self.prev_platform_x
-                if abs(dx) > 0.2:
-                    self.platform_direction = 1 if dx > 0 else -1
-                    self.current_speed = abs(dx)
-            
-            self.prev_platform_x = platform_center_x
-            distance_to_center = base_center_x - platform_center_x
+                diff = plat_center - self.prev_platform_x
+                if abs(diff) > 0.2:
+                    self.direction = 1 if diff > 0 else -1
+            self.prev_platform_x = plat_center
 
-            moving_towards = (distance_to_center > 0 and self.platform_direction == 1) or \
-                             (distance_to_center < 0 and self.platform_direction == -1)
+            # Условие идеального соприкосновения краев:
+            # Кликаем, когда центр летящей платформы максимально близок к центру основания
+            distance_to_center = abs(base_center - plat_center)
 
-            threshold = max(3.0, self.current_speed * click_offset_factor)
-            
-            if moving_towards and abs(distance_to_center) <= threshold:
-                if (now - self.last_click_time) > 0.35:
+            now = time.time()
+            if (now - self.last_click_time) > 0.35:
+                # Если расстояние центров сократилось до минимума (идеальное перекрытие)
+                if distance_to_center <= 2.5:
                     should_click = True
                     self.last_click_time = now
                     self.score_count += 1
-                    telemetry["score"] = self.score_count
-        else:
-            self.lost_frames_count += 1
-            if self.lost_frames_count > 15:
-                telemetry["status"] = "Поиск платформы..."
 
-        return should_click, telemetry
+        return should_click, {"score": self.score_count, "status": "Режим ювелирного клика"}
 
 
 class StackBotFloatingPanel:
     def __init__(self, root):
         self.root = root
-        self.root.title("StackBot Overlay")
+        self.root.title("StackBot v1.0.9")
         self.root.wm_attributes("-topmost", True)
         
         screen_w = self.root.winfo_screenwidth()
@@ -141,7 +104,7 @@ class StackBotFloatingPanel:
         self.root.geometry(f"{panel_w}x{panel_h}+{pos_x}+{pos_y}")
         self.root.resizable(False, False)
 
-        self.engine = StackBotEngineV10()
+        self.engine = StackBotEngineV109()
         self.is_running = False
         self.running_loop = True
 
@@ -160,7 +123,7 @@ class StackBotFloatingPanel:
         main_frame = ttk.Frame(self.root, padding="8")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(main_frame, text="Stack Bot v1.0.7", font=("Segoe UI", 9, "bold"))
+        title_lbl = ttk.Label(main_frame, text="Stack Bot v1.0.9 (Edge-Match)", font=("Segoe UI", 9, "bold"))
         title_lbl.pack(anchor=tk.W, pady=(0, 4))
 
         self.btn_toggle = ttk.Button(main_frame, text="Старт Бот (F6)", command=self.toggle_bot)
@@ -257,8 +220,7 @@ class StackBotFloatingPanel:
 
                     should_click, telemetry = self.engine.process_frame(frame_bgr)
 
-                    if self.is_running and should_click and telemetry["status"] != "Поиск платформы...":
-                        # Кликаем строго в центр выделенной зоны игры
+                    if self.is_running and should_click:
                         cx = self.capture_area["left"] + self.capture_area["width"] // 2
                         cy = self.capture_area["top"] + self.capture_area["height"] // 2
                         pyautogui.click(cx, cy)
@@ -269,8 +231,8 @@ class StackBotFloatingPanel:
                     print(f"[Capture Error]: {e}")
 
                 dt = time.time() - t0
-                if dt < 0.02:
-                    time.sleep(0.02 - dt)
+                if dt < 0.015:
+                    time.sleep(0.015 - dt)
 
     def on_close(self):
         self.running_loop = False
