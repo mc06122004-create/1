@@ -1,6 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.1.2 (Top 2-Block Dynamic Edge-Matching & Cursor Click)
+Версия: 1.1.3 (Zero-Delay Instant Edge-Match & Cursor Click)
 Платформа: Windows 10 / 11 (x64)
 """
 
@@ -20,11 +20,10 @@ pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = False
 
 
-class StackBotEngineV112:
-    """Геометрический движок версии 1.1.2."""
+class StackBotEngineV113:
+    """Движок мгновенного соприкосновения граней без задержек."""
     def __init__(self):
         self.score_count = 0
-        self.last_click_time = 0
         self.prev_moving_x = None
         self.direction = 1  # 1 — вправо, -1 — влево
 
@@ -35,13 +34,9 @@ class StackBotEngineV112:
         debug_frame = frame_bgr.copy()
         height, width, _ = frame_bgr.shape
 
-        # Переводим в HSV/Gray для нахождения контрастных блоков
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        
-        # Адаптивный порог для выделения блоков на темном фоне
         _, thresh = cv2.threshold(gray, 55, 255, cv2.THRESH_BINARY)
         
-        # Морфология для удаления мелкого шума
         kernel = np.ones((3, 3), np.uint8)
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
 
@@ -53,63 +48,56 @@ class StackBotEngineV112:
             if area < 150:
                 continue
             x, y, w, h = cv2.boundingRect(cnt)
-            # Отсекаем не пропорциональные мелкие детали
             if w > h * 1.1:
                 rectangles.append((x, y, w, h))
 
         should_click = False
-        status_text = "Поиск верхнего блока..."
+        status_text = "Ожидание движения..."
 
         if len(rectangles) >= 2:
-            # Сортируем все найденные блоки строго по Y (сверху вниз: от меньшего Y к большему Y)
+            # Сортируем блоки сверху вниз по Y
             rectangles.sort(key=lambda r: r[1])
 
-            # Самый ВЕРХНИЙ блок в области — это всегда летящий (moving_platform)
-            moving_platform = rectangles[0]
-            # ВТОРОЙ сверху блок — это опорный под ним (base_platform)
-            base_platform = rectangles[1]
+            moving_platform = rectangles[0]  # Верхний (движущийся)
+            base_platform = rectangles[1]    # Нижний (опорный)
 
             mx, my, mw, mh = moving_platform
             bx, by, bw, bh = base_platform
 
-            # Ограничиваем: опорный блок действительно должен находиться строго ПОД летящим
             if by >= my + mh - 5:
-                # Координаты граней
                 m_left, m_right = mx, mx + mw
                 b_left, b_right = bx, bx + bw
 
                 m_center = mx + mw / 2.0
                 b_center = bx + bw / 2.0
 
-                # Определяем направление движения летящей платформы
+                # Определяем направление движения
                 if self.prev_moving_x is not None:
                     diff = m_center - self.prev_moving_x
-                    if abs(diff) > 0.15:
+                    if abs(diff) > 0.1:
                         self.direction = 1 if diff > 0 else -1
                 self.prev_moving_x = m_center
 
-                # Рисуем линии на отладочном экране
-                # Зеленый — Опорный блок (который под ним)
+                # Рисуем визуальные линии на превью
+                # Зеленый — Опорный блок
                 cv2.rectangle(debug_frame, (bx, by), (bx + bw, by + bh), (0, 255, 0), 2)
                 cv2.line(debug_frame, (b_left, 0), (b_left, height), (0, 255, 0), 1)
                 cv2.line(debug_frame, (b_right, 0), (b_right, height), (0, 255, 0), 1)
 
-                # Синий — Движущийся летящий блок
+                # Синий — Летящий блок
                 cv2.rectangle(debug_frame, (mx, my), (mx + mw, my + mh), (255, 150, 0), 2)
                 cv2.line(debug_frame, (m_left, 0), (m_left, height), (255, 255, 0), 1)
                 cv2.line(debug_frame, (m_right, 0), (m_right, height), (255, 255, 0), 1)
 
-                # Вычисляем расхождение центров и граней
+                # Проверяем расстояние между центрами
                 center_diff = abs(b_center - m_center)
-                status_text = f"Смещение граней: {center_diff:.1f}px"
+                status_text = f"Смещение: {center_diff:.1f}px"
 
-                now = time.time()
-                if (now - self.last_click_time) > 0.32:
-                    # Идеальное условие соприкосновения граней: смещение не более 2 пикселей
-                    if center_diff <= 2.2:
-                        should_click = True
-                        self.last_click_time = now
-                        self.score_count += 1
+                # Момент идеального совпадения: центры совпали с минимальной погрешностью
+                # БЕЗ каких-либо искусственных пауз (таймаутов), кликаем сразу!
+                if center_diff <= 1.8:
+                    should_click = True
+                    self.score_count += 1
 
         return debug_frame, should_click, {"score": self.score_count, "status": status_text}
 
@@ -117,15 +105,14 @@ class StackBotEngineV112:
 class StackBotVisualApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("StackBot v1.1.2 — Perfect Edge Matching")
+        self.root.title("StackBot v1.1.3 — Instant Edge Match")
         self.root.geometry("440x620")
         self.root.wm_attributes("-topmost", True)
         
-        self.engine = StackBotEngineV112()
+        self.engine = StackBotEngineV113()
         self.is_running = False
         self.running_loop = True
 
-        self.use_cursor_click = tk.BooleanVar(value=True) # По умолчанию клик в позицию курсора!
         self.capture_area = {"top": 150, "left": 150, "width": 380, "height": 480}
         self.photo = None
 
@@ -139,7 +126,7 @@ class StackBotVisualApp:
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.2 (Top 2-Block Tracking)", font=("Segoe UI", 10, "bold"))
+        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.3 (Zero-Delay)", font=("Segoe UI", 10, "bold"))
         title_lbl.pack(anchor=tk.W, pady=(0, 5))
 
         btn_frame = ttk.Frame(main_frame)
@@ -150,10 +137,6 @@ class StackBotVisualApp:
 
         ttk.Button(btn_frame, text="Выделить область", command=self.start_visual_calibration).pack(side=tk.RIGHT, expand=True, fill=tk.X)
 
-        # Режим клика
-        chk_cursor = ttk.Checkbutton(main_frame, text="Кликать строго в текущую позицию курсора мыши", variable=self.use_cursor_click)
-        chk_cursor.pack(anchor=tk.W, pady=3)
-
         self.status_var = tk.StringVar(value="Статус: Остановлен")
         self.status_lbl = ttk.Label(main_frame, textvariable=self.status_var, font=("Segoe UI", 9, "bold"), foreground="darkgreen")
         self.status_lbl.pack(anchor=tk.W, pady=3)
@@ -161,7 +144,7 @@ class StackBotVisualApp:
         self.score_var = tk.StringVar(value="Этажей построено: 0")
         ttk.Label(main_frame, textvariable=self.score_var, font=("Consolas", 10, "bold")).pack(anchor=tk.W, pady=2)
 
-        preview_frame = ttk.LabelFrame(main_frame, text=" Монитор граней (Верхние 2 кирпичика) ", padding="5")
+        preview_frame = ttk.LabelFrame(main_frame, text=" Визуальный контроль граней ", padding="5")
         preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
         self.canvas = tk.Canvas(preview_frame, bg="black")
@@ -250,14 +233,8 @@ class StackBotVisualApp:
                     debug_frame, should_click, telemetry = self.engine.process_frame(frame_bgr)
 
                     if self.is_running and should_click:
-                        if self.use_cursor_click.get():
-                            # Клик прямо туда, где находится курсор мыши
-                            pyautogui.click()
-                        else:
-                            # Клик в центр области
-                            cx = self.capture_area["left"] + self.capture_area["width"] // 2
-                            cy = self.capture_area["top"] + self.capture_area["height"] // 2
-                            pyautogui.click(cx, cy)
+                        # Кликаем СТРОГО в текущую позицию курсора мыши (наведите курсор на игру!)
+                        pyautogui.click()
 
                     self.score_var.set(f"Этажей построено: {telemetry['score']}")
                     self.render_canvas(debug_frame)
@@ -266,8 +243,8 @@ class StackBotVisualApp:
                     print(f"[Capture Error]: {e}")
 
                 dt = time.time() - t0
-                if dt < 0.015:
-                    time.sleep(0.015 - dt)
+                if dt < 0.01:
+                    time.sleep(0.01 - dt)
 
     def render_canvas(self, frame_bgr):
         if frame_bgr is None:
@@ -296,5 +273,7 @@ class StackBotVisualApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = StackBotVisualApp(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_close)
+    root.mainloop()
     root.protocol("WM_DELETE_WINDOW", app.on_close)
     root.mainloop()
