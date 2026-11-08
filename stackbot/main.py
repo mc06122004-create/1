@@ -1,13 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.0.5 (Compact Overlay Floating Panel Edition)
-Платформа: Windows 10 / 11 (x64)
-
-Особенности версии 1.0.5:
-- Компактная мини-панель (плашка) поверх всех окон.
-- Никакого громоздкого интерфейса и монитора предпросмотра — самозахват физически невозможен!
-- Интерактивное выделение области игры мышкой.
-- Горячие клавиши (F6 — Старт/Пауза, Esc — Стоп).
+Версия: 1.0.7 (Stable Overlay & Center-Click Edition)
 """
 
 import sys
@@ -23,11 +16,10 @@ import keyboard
 from collections import deque
 
 pyautogui.PAUSE = 0.0
-pyautogui.FAILSAFE = True
+pyautogui.FAILSAFE = False
 
 
 class StackBotEngineV10:
-    """Геометрический движок версии 1.0.5."""
     def __init__(self):
         self.prev_platform_x = None
         self.platform_direction = 0
@@ -41,7 +33,7 @@ class StackBotEngineV10:
 
     def process_frame(self, frame_bgr, click_offset_factor=0.6):
         if frame_bgr is None or frame_bgr.size == 0:
-            return False, {"status": "Нет кадра"}
+            return False, {"status": "Нет кадра", "score": self.score_count}
 
         height, width, _ = frame_bgr.shape
         now = time.time()
@@ -136,15 +128,11 @@ class StackBotEngineV10:
 
 
 class StackBotFloatingPanel:
-    """Компактная плавающая мини-панель управления v1.0.5."""
     def __init__(self, root):
         self.root = root
         self.root.title("StackBot Overlay")
-        
-        # Делаем окно поверх всех окон, компактным без рамки Windows (или с минимальной)
         self.root.wm_attributes("-topmost", True)
         
-        # Располагаем в правом нижнем углу экрана
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
         panel_w, panel_h = 280, 210
@@ -172,27 +160,21 @@ class StackBotFloatingPanel:
         main_frame = ttk.Frame(self.root, padding="8")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Заголовок
-        title_lbl = ttk.Label(main_frame, text="Stack Bot v1.0.5 (Overlay)", font=("Segoe UI", 9, "bold"))
+        title_lbl = ttk.Label(main_frame, text="Stack Bot v1.0.7", font=("Segoe UI", 9, "bold"))
         title_lbl.pack(anchor=tk.W, pady=(0, 4))
 
-        # Кнопка старта
         self.btn_toggle = ttk.Button(main_frame, text="Старт Бот (F6)", command=self.toggle_bot)
         self.btn_toggle.pack(fill=tk.X, pady=3)
 
-        # Кнопка калибровки
         ttk.Button(main_frame, text="Выделить область мышкой", command=self.start_visual_calibration).pack(fill=tk.X, pady=3)
 
-        # Статус
         self.status_var = tk.StringVar(value="Статус: Остановлен")
         self.status_lbl = ttk.Label(main_frame, textvariable=self.status_var, font=("Segoe UI", 9, "bold"), foreground="darkgreen")
         self.status_lbl.pack(anchor=tk.W, pady=(5, 2))
 
-        # Счетчик этажей
         self.score_var = tk.StringVar(value="Этажей построено: 0")
         ttk.Label(main_frame, textvariable=self.score_var, font=("Consolas", 9)).pack(anchor=tk.W, pady=2)
 
-        # Подсказка по горячим клавишам
         ttk.Label(main_frame, text="F6 — Старт/Пауза | Esc — Стоп", font=("Segoe UI", 8), foreground="gray").pack(anchor=tk.W, pady=(4, 0))
 
     def bind_hotkeys(self):
@@ -276,7 +258,10 @@ class StackBotFloatingPanel:
                     should_click, telemetry = self.engine.process_frame(frame_bgr)
 
                     if self.is_running and should_click and telemetry["status"] != "Поиск платформы...":
-                        pyautogui.click()
+                        # Кликаем строго в центр выделенной зоны игры
+                        cx = self.capture_area["left"] + self.capture_area["width"] // 2
+                        cy = self.capture_area["top"] + self.capture_area["height"] // 2
+                        pyautogui.click(cx, cy)
 
                     self.score_var.set(f"Этажей построено: {telemetry['score']}")
 
