@@ -1,6 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.1.9 (Perfect Match with 4s Cooldown Edition)
+Версия: 1.2.0 (High-Speed Adaptive Edge-Match Edition)
 Платформа: Windows 10 / 11 (x64)
 """
 
@@ -20,8 +20,8 @@ pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = False
 
 
-class StackBotEngineV119:
-    """Тот самый идеальный движок предсказания из версии 1.1.6 + 4 секунды защиты."""
+class StackBotEngineV120:
+    """Интеллектуальный движок с адаптивным упреждением для высоких скоростей."""
     def __init__(self):
         self.score_count = 0
         self.last_click_time = 0
@@ -50,7 +50,7 @@ class StackBotEngineV119:
                 rectangles.append((x, y, w, h))
 
         should_click = False
-        status_text = "Идеальный поиск блоков..."
+        status_text = "Высокоскоростной режим..."
 
         if len(rectangles) >= 2:
             rectangles.sort(key=lambda r: r[1])
@@ -65,7 +65,7 @@ class StackBotEngineV119:
                 m_center = mx + mw / 2.0
                 b_center = bx + bw / 2.0
 
-                # Расчет скорости движения платформы для упреждения
+                # Точный расчет текущей скорости движения платформы
                 if self.prev_m_center is not None:
                     self.velocity = m_center - self.prev_m_center
                 self.prev_m_center = m_center
@@ -74,23 +74,31 @@ class StackBotEngineV119:
                 cv2.rectangle(debug_frame, (bx, by), (bx + bw, by + bh), (0, 255, 0), 2)
                 cv2.rectangle(debug_frame, (mx, my), (mx + mw, my + mh), (255, 150, 0), 2)
 
-                # Предсказываем позицию на следующий кадр с учетом скорости
-                predicted_m_center = m_center + self.velocity
-                diff = abs(b_center - predicted_m_center)
+                # АДАПТИВНОЕ УПРЕЖДЕНИЕ: на высоких скоростях (этажи 25+) увеличиваем коэффициент упреждения,
+                # чтобы компенсировать задержку отклика системы и кадра.
+                speed_magnitude = abs(self.velocity)
+                lead_factor = 1.2 if speed_magnitude > 8.0 else 0.8
+                predicted_m_center = m_center + (self.velocity * lead_factor)
                 
-                status_text = f"Смещение: {diff:.1f}px"
+                diff = abs(b_center - predicted_m_center)
+                status_text = f"Смещение: {diff:.1f}px | Скорость: {speed_magnitude:.1f}"
 
                 now = time.time()
-                # СТРОГАЯ ЗАЩИТА: после успешного клика бот «спит» 4.0 секунды, 
-                # пока новый блок полностью не заспавнится, не долетит и не встанет на место!
-                if (now - self.last_click_time) > 4.0:
-                    # Ювелирное условие совпадения
-                    if diff <= 2.0:
+                
+                # Адаптивный кулдаун: на высоких скоростях блоки летают быстрее, 
+                # поэтому сокращаем защитный интервал до 1.2 секунды, чтобы бот успевал за темпом.
+                cooldown_limit = 1.2 if self.score_count > 25 else 3.0
+
+                if (now - self.last_click_time) > cooldown_limit:
+                    # Допуск на высоких скоростях чуть шире, чтобы ловить быстрый центр
+                    tolerance = 2.5 if speed_magnitude > 8.0 else 1.8
+                    if diff <= tolerance:
                         should_click = True
                         self.last_click_time = now
                         self.score_count += 1
                 else:
-                    status_text = f"Пауза после клика ({int(4.0 - (now - self.last_click_time))}с)..."
+                    remaining = int(cooldown_limit - (now - self.last_click_time))
+                    status_text = f"Защитная пауза ({remaining}с)..."
 
         return debug_frame, should_click, {"score": self.score_count, "status": status_text}
 
@@ -98,11 +106,11 @@ class StackBotEngineV119:
 class StackBotVisualApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("StackBot v1.1.9 — 4s Cooldown Perfect")
+        self.root.title("StackBot v1.2.0 — High-Speed Adaptive")
         self.root.geometry("440x560")
         self.root.wm_attributes("-topmost", True)
         
-        self.engine = StackBotEngineV119()
+        self.engine = StackBotEngineV120()
         self.is_running = False
         self.running_loop = True
 
@@ -122,7 +130,7 @@ class StackBotVisualApp:
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.9 (4s Safe Cooldown)", font=("Segoe UI", 10, "bold"))
+        title_lbl = ttk.Label(main_frame, text="StackBot v1.2.0 (High-Speed Adaptive)", font=("Segoe UI", 10, "bold"))
         title_lbl.pack(anchor=tk.W, pady=(0, 5))
 
         btn_frame = ttk.Frame(main_frame)
@@ -140,7 +148,7 @@ class StackBotVisualApp:
         self.score_var = tk.StringVar(value="Этажей построено: 0")
         ttk.Label(main_frame, textvariable=self.score_var, font=("Consolas", 10, "bold")).pack(anchor=tk.W, pady=2)
 
-        preview_frame = ttk.LabelFrame(main_frame, text=" Монитор стабильности ", padding="5")
+        preview_frame = ttk.LabelFrame(main_frame, text=" Монитор адаптивной скорости ", padding="5")
         preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
         self.canvas = tk.Canvas(preview_frame, bg="black", highlightthickness=0)
