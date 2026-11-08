@@ -1,6 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.1.0 (True Edge-Alignment Tracking Edition)
+Версия: 1.1.1 (Visual Debug Overlay & Precision Edge Edition)
 """
 
 import sys
@@ -13,105 +13,92 @@ import cv2
 import numpy as np
 import pyautogui
 import keyboard
+from PIL import Image, ImageTk
 
 pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = False
 
 
-class StackBotEngineV110:
-    """Движок отслеживания движущегося объекта и выравнивания по граням."""
+class StackBotEngineV111:
+    """Движок с визуализацией границ и отслеживанием краев."""
     def __init__(self):
         self.score_count = 0
         self.last_click_time = 0
-        self.prev_plat_x = None
-        self.direction = 1  # 1 вправо, -1 влево
+        self.prev_platform_x = None
 
     def process_frame(self, frame_bgr):
         if frame_bgr is None or frame_bgr.size == 0:
-            return False, {"score": self.score_count, "status": "Нет кадра"}
+            return None, False, {"score": self.score_count, "status": "Нет кадра"}
 
+        # Делаем копию кадра для рисования линий отладки
+        debug_frame = frame_bgr.copy()
         height, width, _ = frame_bgr.shape
-        
-        # Перевод в ч/б и пороговая фильтрация для четкого выделения блоков
+
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 70, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(gray, 65, 255, cv2.THRESH_BINARY)
         
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         rectangles = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 180:
+            if area < 150:
                 continue
             x, y, w, h = cv2.boundingRect(cnt)
-            # Фильтруем прямоугольные блоки игры
             if w > h * 1.05:
                 rectangles.append((x, y, w, h))
 
         should_click = False
+        status_text = "Ищем блоки..."
 
         if len(rectangles) >= 2:
-            # Сортируем блоки по вертикали (снизу вверх)
             rectangles.sort(key=lambda r: r[1], reverse=True)
             
-            base = rectangles[0]       # Нижнее стабильное основание
-            platform = rectangles[1]   # Движущийся объект (платформа)
+            base = rectangles[0]       # Основание
+            platform = rectangles[1]   # Платформа
 
             bx, by, bw, bh = base
             px, py, pw, ph = platform
 
-            base_left = bx
-            base_right = bx + bw
-            base_center = bx + bw / 2.0
+            base_center_x = bx + bw / 2.0
+            plat_center_x = px + pw / 2.0
 
-            plat_left = px
-            plat_right = px + pw
-            plat_center = px + pw / 2.0
+            # Рисуем зеленый прямоугольник основания
+            cv2.rectangle(debug_frame, (bx, by), (bx + bw, by + bh), (0, 255, 0), 2)
+            # Рисуем синий прямоугольник движущейся платформы
+            cv2.rectangle(debug_frame, (px, py), (px + pw, py + ph), (255, 0, 0), 2)
+            
+            # Рисуем вертикальную линию центра основания (красная)
+            cv2.line(debug_frame, (int(base_center_x), 0), (int(base_center_x), height), (0, 0, 255), 1)
 
-            # Определяем направление и скорость движения платформы
-            if self.prev_plat_x is not None:
-                diff = plat_center - self.prev_plat_x
-                if abs(diff) > 0.1:
-                    self.direction = 1 if diff > 0 else -1
-            self.prev_plat_x = plat_center
+            distance = abs(base_center_x - plat_center_x)
+            status_text = f"Дистанция: {distance:.1f}px"
 
-            # Логика идеального выравнивания по граням в зависимости от направления:
-            # Если платформа идет вправо (direction = 1), смотрим на совпадение левого края платформы с левым краем базы
-            # или совпадение их центров для симметричных блоков.
             now = time.time()
-            if (now - self.last_click_time) > 0.3:
-                # Вычисляем расхождение центров
-                center_diff = abs(base_center - plat_center)
-                
-                # Добиваемся идеального момента перекрытия (погрешность менее 1.5 пикселей)
-                if center_diff <= 1.5:
+            if (now - self.last_click_time) > 0.35:
+                # Ювелирное условие схождения краев/центров
+                if distance <= 2.0:
                     should_click = True
                     self.last_click_time = now
                     self.score_count += 1
 
-        return should_click, {"score": self.score_count, "status": "Отслеживание граней"}
+        return debug_frame, should_click, {"score": self.score_count, "status": status_text}
 
 
-class StackBotFloatingPanel:
+class StackBotVisualApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("StackBot v1.1.0")
+        self.root.title("StackBot v1.1.1 — Visual Control")
+        self.root.geometry("420x580")
         self.root.wm_attributes("-topmost", True)
         
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
-        panel_w, panel_h = 280, 210
-        pos_x = screen_w - panel_w - 40
-        pos_y = screen_h - panel_h - 100
-        self.root.geometry(f"{panel_w}x{panel_h}+{pos_x}+{pos_y}")
-        self.root.resizable(False, False)
-
-        self.engine = StackBotEngineV110()
+        self.engine = StackBotEngineV111()
         self.is_running = False
         self.running_loop = True
 
-        self.capture_area = {"top": 150, "left": 150, "width": 400, "height": 550}
-        
+        self.capture_area = {"top": 150, "left": 150, "width": 350, "height": 450}
+        self.photo = None
+
         self.build_ui()
         self.bind_hotkeys()
 
@@ -119,28 +106,35 @@ class StackBotFloatingPanel:
         self.worker_thread.start()
 
     def build_ui(self):
-        style = ttk.Style()
-        style.theme_use('clam')
-
-        main_frame = ttk.Frame(self.root, padding="8")
+        main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(main_frame, text="Stack Bot v1.1.0 (Edge-Tracking)", font=("Segoe UI", 9, "bold"))
-        title_lbl.pack(anchor=tk.W, pady=(0, 4))
+        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.1 (Visual Debug)", font=("Segoe UI", 10, "bold"))
+        title_lbl.pack(anchor=tk.W, pady=(0, 5))
 
-        self.btn_toggle = ttk.Button(main_frame, text="Старт Бот (F6)", command=self.toggle_bot)
-        self.btn_toggle.pack(fill=tk.X, pady=3)
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=5)
 
-        ttk.Button(main_frame, text="Выделить область мышкой", command=self.start_visual_calibration).pack(fill=tk.X, pady=3)
+        self.btn_toggle = ttk.Button(btn_frame, text="Старт Бот (F6)", command=self.toggle_bot)
+        self.btn_toggle.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
+
+        ttk.Button(btn_frame, text="Выделить область", command=self.start_visual_calibration).pack(side=tk.RIGHT, expand=True, fill=tk.X)
 
         self.status_var = tk.StringVar(value="Статус: Остановлен")
         self.status_lbl = ttk.Label(main_frame, textvariable=self.status_var, font=("Segoe UI", 9, "bold"), foreground="darkgreen")
-        self.status_lbl.pack(anchor=tk.W, pady=(5, 2))
+        self.status_lbl.pack(anchor=tk.W, pady=5)
 
         self.score_var = tk.StringVar(value="Этажей построено: 0")
-        ttk.Label(main_frame, textvariable=self.score_var, font=("Consolas", 9)).pack(anchor=tk.W, pady=2)
+        ttk.Label(main_frame, textvariable=self.score_var, font=("Consolas", 10, "bold")).pack(anchor=tk.W, pady=2)
 
-        ttk.Label(main_frame, text="F6 — Старт/Пауза | Esc — Стоп", font=("Segoe UI", 8), foreground="gray").pack(anchor=tk.W, pady=(4, 0))
+        # Экран мониторинга с линиями отладки прямо в окне программы!
+        preview_frame = ttk.LabelFrame(main_frame, text=" Визуальный контроль захвата ", padding="5")
+        preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        self.canvas = tk.Canvas(preview_frame, bg="black")
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(main_frame, text="F6 — Старт/Пауза | Esc — Стоп", font=("Segoe UI", 8), foreground="gray").pack(anchor=tk.W, pady=(5, 0))
 
     def bind_hotkeys(self):
         try:
@@ -220,7 +214,7 @@ class StackBotFloatingPanel:
                     frame = np.array(screenshot)
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
-                    should_click, telemetry = self.engine.process_frame(frame_bgr)
+                    debug_frame, should_click, telemetry = self.engine.process_frame(frame_bgr)
 
                     if self.is_running and should_click:
                         cx = self.capture_area["left"] + self.capture_area["width"] // 2
@@ -228,13 +222,29 @@ class StackBotFloatingPanel:
                         pyautogui.click(cx, cy)
 
                     self.score_var.set(f"Этажей построено: {telemetry['score']}")
+                    self.render_canvas(debug_frame)
 
                 except Exception as e:
                     print(f"[Capture Error]: {e}")
 
                 dt = time.time() - t0
-                if dt < 0.015:
-                    time.sleep(0.015 - dt)
+                if dt < 0.02:
+                    time.sleep(0.02 - dt)
+
+    def render_canvas(self, frame_bgr):
+        if frame_bgr is None:
+            return
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(frame_rgb)
+
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+
+        if cw > 10 and ch > 10:
+            img = img.resize((cw, ch), Image.Resampling.LANCZOS)
+
+        self.photo = ImageTk.PhotoImage(image=img)
+        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
 
     def on_close(self):
         self.running_loop = False
@@ -247,6 +257,6 @@ class StackBotFloatingPanel:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = StackBotFloatingPanel(root)
+    app = StackBotVisualApp(root)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
     root.mainloop()
