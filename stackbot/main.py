@@ -1,6 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.1.3 (Zero-Delay Instant Edge-Match & Cursor Click)
+Версия: 1.1.4 (Stable Anti-Glitch & Anti-Flicker Edition)
 Платформа: Windows 10 / 11 (x64)
 """
 
@@ -20,12 +20,12 @@ pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = False
 
 
-class StackBotEngineV113:
-    """Движок мгновенного соприкосновения граней без задержек."""
+class StackBotEngineV114:
+    """Стабилизированный движок без ложных срабатываний и скачков."""
     def __init__(self):
         self.score_count = 0
-        self.prev_moving_x = None
-        self.direction = 1  # 1 — вправо, -1 — влево
+        self.last_valid_mx = None
+        self.cooldown_click = 0
 
     def process_frame(self, frame_bgr):
         if frame_bgr is None or frame_bgr.size == 0:
@@ -35,69 +35,60 @@ class StackBotEngineV113:
         height, width, _ = frame_bgr.shape
 
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 55, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY)
         
-        kernel = np.ones((3, 3), np.uint8)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         rectangles = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 150:
+            if area < 180:
                 continue
             x, y, w, h = cv2.boundingRect(cnt)
             if w > h * 1.1:
                 rectangles.append((x, y, w, h))
 
         should_click = False
-        status_text = "Ожидание движения..."
+        status_text = "Стабилизация..."
 
         if len(rectangles) >= 2:
             # Сортируем блоки сверху вниз по Y
             rectangles.sort(key=lambda r: r[1])
 
-            moving_platform = rectangles[0]  # Верхний (движущийся)
-            base_platform = rectangles[1]    # Нижний (опорный)
+            moving_platform = rectangles[0]
+            base_platform = rectangles[1]
 
             mx, my, mw, mh = moving_platform
             bx, by, bw, bh = base_platform
 
-            if by >= my + mh - 5:
-                m_left, m_right = mx, mx + mw
-                b_left, b_right = bx, bx + bw
-
+            # Защита от ложных скачков: ширина летящего блока должна быть соразмерна опорному
+            if by >= my + mh - 8 and abs(mw - bw) < bw * 0.6:
                 m_center = mx + mw / 2.0
                 b_center = bx + bw / 2.0
 
-                # Определяем направление движения
-                if self.prev_moving_x is not None:
-                    diff = m_center - self.prev_moving_x
-                    if abs(diff) > 0.1:
-                        self.direction = 1 if diff > 0 else -1
-                self.prev_moving_x = m_center
+                # Отсекаем телепортацию/шумы контуров
+                if self.last_valid_mx is not None:
+                    if abs(mx - self.last_valid_mx) > 40:
+                        # Слишком резкий скачок — это глюк контура, пропускаем кадр
+                        return debug_frame, False, {"score": self.score_count, "status": "Фильтрация шума"}
+                
+                self.last_valid_mx = mx
 
-                # Рисуем визуальные линии на превью
-                # Зеленый — Опорный блок
+                # Визуальные линии
                 cv2.rectangle(debug_frame, (bx, by), (bx + bw, by + bh), (0, 255, 0), 2)
-                cv2.line(debug_frame, (b_left, 0), (b_left, height), (0, 255, 0), 1)
-                cv2.line(debug_frame, (b_right, 0), (b_right, height), (0, 255, 0), 1)
-
-                # Синий — Летящий блок
                 cv2.rectangle(debug_frame, (mx, my), (mx + mw, my + mh), (255, 150, 0), 2)
-                cv2.line(debug_frame, (m_left, 0), (m_left, height), (255, 255, 0), 1)
-                cv2.line(debug_frame, (m_right, 0), (m_right, height), (255, 255, 0), 1)
 
-                # Проверяем расстояние между центрами
                 center_diff = abs(b_center - m_center)
                 status_text = f"Смещение: {center_diff:.1f}px"
 
-                # Момент идеального совпадения: центры совпали с минимальной погрешностью
-                # БЕЗ каких-либо искусственных пауз (таймаутов), кликаем сразу!
-                if center_diff <= 1.8:
-                    should_click = True
-                    self.score_count += 1
+                now = time.time()
+                # Защита от двойного клика (пауза между этажами минимум 0.25 сек)
+                if (now - self.cooldown_click) > 0.25:
+                    # Идеальное условие соприкосновения (центры совпали в пределах 1.5 пикселей)
+                    if center_diff <= 1.5:
+                        should_click = True
+                        self.cooldown_click = now
+                        self.score_count += 1
 
         return debug_frame, should_click, {"score": self.score_count, "status": status_text}
 
@@ -105,15 +96,15 @@ class StackBotEngineV113:
 class StackBotVisualApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("StackBot v1.1.3 — Instant Edge Match")
-        self.root.geometry("440x620")
+        self.root.title("StackBot v1.1.4 — Stable")
+        self.root.geometry("440x580")
         self.root.wm_attributes("-topmost", True)
         
-        self.engine = StackBotEngineV113()
+        self.engine = StackBotEngineV114()
         self.is_running = False
         self.running_loop = True
 
-        self.capture_area = {"top": 150, "left": 150, "width": 380, "height": 480}
+        self.capture_area = {"top": 150, "left": 150, "width": 380, "height": 450}
         self.photo = None
 
         self.build_ui()
@@ -126,7 +117,7 @@ class StackBotVisualApp:
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.3 (Zero-Delay)", font=("Segoe UI", 10, "bold"))
+        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.4 (Anti-Glitch)", font=("Segoe UI", 10, "bold"))
         title_lbl.pack(anchor=tk.W, pady=(0, 5))
 
         btn_frame = ttk.Frame(main_frame)
@@ -144,10 +135,10 @@ class StackBotVisualApp:
         self.score_var = tk.StringVar(value="Этажей построено: 0")
         ttk.Label(main_frame, textvariable=self.score_var, font=("Consolas", 10, "bold")).pack(anchor=tk.W, pady=2)
 
-        preview_frame = ttk.LabelFrame(main_frame, text=" Визуальный контроль граней ", padding="5")
+        preview_frame = ttk.LabelFrame(main_frame, text=" Стабильный монитор ", padding="5")
         preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
-        self.canvas = tk.Canvas(preview_frame, bg="black")
+        self.canvas = tk.Canvas(preview_frame, bg="black", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(main_frame, text="F6 — Старт/Пауза | Esc — Стоп", font=("Segoe UI", 8), foreground="gray").pack(anchor=tk.W, pady=(5, 0))
@@ -233,22 +224,23 @@ class StackBotVisualApp:
                     debug_frame, should_click, telemetry = self.engine.process_frame(frame_bgr)
 
                     if self.is_running and should_click:
-                        # Кликаем СТРОГО в текущую позицию курсора мыши (наведите курсор на игру!)
+                        # Кликаем в текущую позицию курсора мыши
                         pyautogui.click()
 
                     self.score_var.set(f"Этажей построено: {telemetry['score']}")
-                    self.render_canvas(debug_frame)
+                    
+                    # Оптимизированный рендеринг без лишних миганий
+                    if debug_frame is not None:
+                        self.render_canvas(debug_frame)
 
                 except Exception as e:
                     print(f"[Capture Error]: {e}")
 
                 dt = time.time() - t0
-                if dt < 0.01:
-                    time.sleep(0.01 - dt)
+                if dt < 0.015:
+                    time.sleep(0.015 - dt)
 
     def render_canvas(self, frame_bgr):
-        if frame_bgr is None:
-            return
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(frame_rgb)
 
@@ -256,9 +248,10 @@ class StackBotVisualApp:
         ch = self.canvas.winfo_height()
 
         if cw > 10 and ch > 10:
-            img = img.resize((cw, ch), Image.Resampling.LANCZOS)
+            img = img.resize((cw, ch), Image.Resampling.BOX)
 
         self.photo = ImageTk.PhotoImage(image=img)
+        self.canvas.delete("all")
         self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
 
     def on_close(self):
@@ -273,7 +266,5 @@ class StackBotVisualApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = StackBotVisualApp(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_close)
-    root.mainloop()
     root.protocol("WM_DELETE_WINDOW", app.on_close)
     root.mainloop()
