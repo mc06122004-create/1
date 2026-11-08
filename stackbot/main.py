@@ -1,6 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.1.6 (Predictive Perfect Edge-Match Edition)
+Версия: 1.1.7 (Spawn-Protection & Perfect Edge-Match Edition)
 Платформа: Windows 10 / 11 (x64)
 """
 
@@ -20,13 +20,15 @@ pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = False
 
 
-class StackBotEngineV116:
-    """Интеллектуальный движок с предсказанием скорости и безупречным кликом."""
+class StackBotEngineV117:
+    """Интеллектуальный движок с защитой от мгновенного клика при спавне."""
     def __init__(self):
         self.score_count = 0
         self.last_click_time = 0
         self.prev_m_center = None
         self.velocity = 0.0
+        self.last_block_signature = None
+        self.spawn_time = 0.0
 
     def process_frame(self, frame_bgr):
         if frame_bgr is None or frame_bgr.size == 0:
@@ -50,7 +52,7 @@ class StackBotEngineV116:
                 rectangles.append((x, y, w, h))
 
         should_click = False
-        status_text = "Поиск блоков..."
+        status_text = "Идеальное строительство..."
 
         if len(rectangles) >= 2:
             rectangles.sort(key=lambda r: r[1])
@@ -65,6 +67,16 @@ class StackBotEngineV116:
                 m_center = mx + mw / 2.0
                 b_center = bx + bw / 2.0
 
+                # Отслеживаем появление нового блока (смена этажа / подпись по размеру и позиции Y)
+                block_signature = (int(mw), int(my))
+                if self.last_block_signature != block_signature:
+                    # Это новый блок! Включаем защиту от спавна
+                    self.spawn_time = time.time()
+                    self.last_block_signature = block_signature
+
+                # Защита от спавна: первые 0.25 секунды после появления нового блока кликать СТРОГО ЗАПРЕЩЕНО
+                is_safe_from_spawn = (time.time() - self.spawn_time) > 0.25
+
                 # Расчет скорости движения платформы для упреждения
                 if self.prev_m_center is not None:
                     self.velocity = m_center - self.prev_m_center
@@ -78,23 +90,17 @@ class StackBotEngineV116:
                 predicted_m_center = m_center + self.velocity
                 diff = abs(b_center - predicted_m_center)
                 
-                status_text = f"Смещение: {diff:.1f}px | Скорость: {self.velocity:.1f}"
+                status_text = f"Смещение: {diff:.1f}px"
 
                 now = time.time()
-                # Защита от дребезга, но с быстрым откликом
-                if (now - self.last_click_time) > 0.22:
-                    # Идеальное условие: с учетом упреждения скорость сходится в пределах 2.0 пикселей
-                    if diff <= 2.0:
+                if is_safe_from_spawn and (now - self.last_click_time) > 0.22:
+                    # Идеальное условие соприкосновения
+                    if diff <= 1.8:
                         should_click = True
                         self.last_click_time = now
                         self.score_count += 1
-                
-                # Защита от зависания (если платформа долго едет и не кликнуло — принудительный клик по центру)
-                elif (now - self.last_click_time) > 1.2:
-                    if abs(b_center - m_center) <= 4.0:
-                        should_click = True
-                        self.last_click_time = now
-                        self.score_count += 1
+                elif not is_safe_from_spawn:
+                    status_text = "Спавн-защита..."
 
         return debug_frame, should_click, {"score": self.score_count, "status": status_text}
 
@@ -102,11 +108,11 @@ class StackBotEngineV116:
 class StackBotVisualApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("StackBot v1.1.6 — Predictive")
+        self.root.title("StackBot v1.1.7 — Protected")
         self.root.geometry("440x560")
         self.root.wm_attributes("-topmost", True)
         
-        self.engine = StackBotEngineV116()
+        self.engine = StackBotEngineV117()
         self.is_running = False
         self.running_loop = True
 
@@ -126,7 +132,7 @@ class StackBotVisualApp:
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.6 (Predictive Match)", font=("Segoe UI", 10, "bold"))
+        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.7 (Spawn-Protected)", font=("Segoe UI", 10, "bold"))
         title_lbl.pack(anchor=tk.W, pady=(0, 5))
 
         btn_frame = ttk.Frame(main_frame)
@@ -144,7 +150,7 @@ class StackBotVisualApp:
         self.score_var = tk.StringVar(value="Этажей построено: 0")
         ttk.Label(main_frame, textvariable=self.score_var, font=("Consolas", 10, "bold")).pack(anchor=tk.W, pady=2)
 
-        preview_frame = ttk.LabelFrame(main_frame, text=" Монитор предсказания граней ", padding="5")
+        preview_frame = ttk.LabelFrame(main_frame, text=" Монитор стабильности ", padding="5")
         preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
         self.canvas = tk.Canvas(preview_frame, bg="black", highlightthickness=0)
