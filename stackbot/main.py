@@ -306,7 +306,7 @@ class StackBotAppV10:
                 self.capture_area = {"top": y1, "left": x1, "width": w, "height": h}
                 messagebox.showinfo("Успех", f"Область захвата задана:\nX: {x1}, Y: {y1}, Ширина: {w}, Высота: {h}")
             else:
-                messagebox.showwarning("Внимание", слишком маленькая область! Область не изменена.")
+                messagebox.showwarning("Warning", "Area is too small! Please select a larger region.")
 
             calib_overlay.destroy()
             self.root.deiconify()  # Возвращаем главное окно на экран
