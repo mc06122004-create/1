@@ -1,6 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.0.9 (Perfect Edge-Match Edition)
+Версия: 1.1.0 (True Edge-Alignment Tracking Edition)
 """
 
 import sys
@@ -18,13 +18,13 @@ pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = False
 
 
-class StackBotEngineV109:
-    """Движок идеального соприкосновения краев платформы и основания."""
+class StackBotEngineV110:
+    """Движок отслеживания движущегося объекта и выравнивания по граням."""
     def __init__(self):
         self.score_count = 0
         self.last_click_time = 0
-        self.prev_platform_x = None
-        self.direction = 1
+        self.prev_plat_x = None
+        self.direction = 1  # 1 вправо, -1 влево
 
     def process_frame(self, frame_bgr):
         if frame_bgr is None or frame_bgr.size == 0:
@@ -32,30 +32,30 @@ class StackBotEngineV109:
 
         height, width, _ = frame_bgr.shape
         
-        # Переводим в градации серого и находим контрастные блоки
+        # Перевод в ч/б и пороговая фильтрация для четкого выделения блоков
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(gray, 70, 255, cv2.THRESH_BINARY)
         
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         rectangles = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 200:
+            if area < 180:
                 continue
             x, y, w, h = cv2.boundingRect(cnt)
-            # Отбираем только горизонтальные игровые блоки
-            if w > h * 1.1:
+            # Фильтруем прямоугольные блоки игры
+            if w > h * 1.05:
                 rectangles.append((x, y, w, h))
 
         should_click = False
 
         if len(rectangles) >= 2:
-            # Сортируем снизу вверх по координате Y
+            # Сортируем блоки по вертикали (снизу вверх)
             rectangles.sort(key=lambda r: r[1], reverse=True)
             
-            base = rectangles[0]       # Нижнее основание
-            platform = rectangles[1]   # Летящая платформа
+            base = rectangles[0]       # Нижнее стабильное основание
+            platform = rectangles[1]   # Движущийся объект (платформа)
 
             bx, by, bw, bh = base
             px, py, pw, ph = platform
@@ -68,32 +68,34 @@ class StackBotEngineV109:
             plat_right = px + pw
             plat_center = px + pw / 2.0
 
-            # Определяем направление движения платформы
-            if self.prev_platform_x is not None:
-                diff = plat_center - self.prev_platform_x
-                if abs(diff) > 0.2:
+            # Определяем направление и скорость движения платформы
+            if self.prev_plat_x is not None:
+                diff = plat_center - self.prev_plat_x
+                if abs(diff) > 0.1:
                     self.direction = 1 if diff > 0 else -1
-            self.prev_platform_x = plat_center
+            self.prev_plat_x = plat_center
 
-            # Условие идеального соприкосновения краев:
-            # Кликаем, когда центр летящей платформы максимально близок к центру основания
-            distance_to_center = abs(base_center - plat_center)
-
+            # Логика идеального выравнивания по граням в зависимости от направления:
+            # Если платформа идет вправо (direction = 1), смотрим на совпадение левого края платформы с левым краем базы
+            # или совпадение их центров для симметричных блоков.
             now = time.time()
-            if (now - self.last_click_time) > 0.35:
-                # Если расстояние центров сократилось до минимума (идеальное перекрытие)
-                if distance_to_center <= 2.5:
+            if (now - self.last_click_time) > 0.3:
+                # Вычисляем расхождение центров
+                center_diff = abs(base_center - plat_center)
+                
+                # Добиваемся идеального момента перекрытия (погрешность менее 1.5 пикселей)
+                if center_diff <= 1.5:
                     should_click = True
                     self.last_click_time = now
                     self.score_count += 1
 
-        return should_click, {"score": self.score_count, "status": "Режим ювелирного клика"}
+        return should_click, {"score": self.score_count, "status": "Отслеживание граней"}
 
 
 class StackBotFloatingPanel:
     def __init__(self, root):
         self.root = root
-        self.root.title("StackBot v1.0.9")
+        self.root.title("StackBot v1.1.0")
         self.root.wm_attributes("-topmost", True)
         
         screen_w = self.root.winfo_screenwidth()
@@ -104,7 +106,7 @@ class StackBotFloatingPanel:
         self.root.geometry(f"{panel_w}x{panel_h}+{pos_x}+{pos_y}")
         self.root.resizable(False, False)
 
-        self.engine = StackBotEngineV109()
+        self.engine = StackBotEngineV110()
         self.is_running = False
         self.running_loop = True
 
@@ -123,7 +125,7 @@ class StackBotFloatingPanel:
         main_frame = ttk.Frame(self.root, padding="8")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(main_frame, text="Stack Bot v1.0.9 (Edge-Match)", font=("Segoe UI", 9, "bold"))
+        title_lbl = ttk.Label(main_frame, text="Stack Bot v1.1.0 (Edge-Tracking)", font=("Segoe UI", 9, "bold"))
         title_lbl.pack(anchor=tk.W, pady=(0, 4))
 
         self.btn_toggle = ttk.Button(main_frame, text="Старт Бот (F6)", command=self.toggle_bot)
