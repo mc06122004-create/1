@@ -1,13 +1,13 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.0.4 (Stable MSS Screen Crop Edition)
+Версия: 1.0.5 (Compact Overlay Floating Panel Edition)
 Платформа: Windows 10 / 11 (x64)
 
-Исправления в версии 1.0.4:
-- Захват цветной картинки через MSS (без черных экранов и багов PrintWindow).
-- Выделение интерактивной зоны калибровки мышкой (окно бота автоматически сворачивается на секунду и возвращается).
-- Бот считывает только ту область экрана, которую вы выделили мышкой.
-- Если окно бота не перекрывает выделенную рамкой игру, самозахват полностью отсутствует!
+Особенности версии 1.0.5:
+- Компактная мини-панель (плашка) поверх всех окон.
+- Никакого громоздкого интерфейса и монитора предпросмотра — самозахват физически невозможен!
+- Интерактивное выделение области игры мышкой.
+- Горячие клавиши (F6 — Старт/Пауза, Esc — Стоп).
 """
 
 import sys
@@ -21,14 +21,13 @@ import numpy as np
 import pyautogui
 import keyboard
 from collections import deque
-from PIL import Image, ImageTk
 
 pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = True
 
 
 class StackBotEngineV10:
-    """Геометрический движок версии 1.0.4."""
+    """Геометрический движок версии 1.0.5."""
     def __init__(self):
         self.prev_platform_x = None
         self.platform_direction = 0
@@ -42,7 +41,7 @@ class StackBotEngineV10:
 
     def process_frame(self, frame_bgr, click_offset_factor=0.6):
         if frame_bgr is None or frame_bgr.size == 0:
-            return None, False, {"status": "Нет изображения"}
+            return False, {"status": "Нет кадра"}
 
         height, width, _ = frame_bgr.shape
         now = time.time()
@@ -94,11 +93,6 @@ class StackBotEngineV10:
 
         should_click = False
         telemetry = {
-            "platform_x": None,
-            "base_x": None,
-            "speed": self.current_speed,
-            "direction": self.platform_direction,
-            "distance": None,
             "score": self.score_count,
             "status": "Активен"
         }
@@ -122,14 +116,8 @@ class StackBotEngineV10:
             self.prev_platform_x = platform_center_x
             distance_to_center = base_center_x - platform_center_x
 
-            telemetry["platform_x"] = platform_center_x
-            telemetry["base_x"] = base_center_x
-            telemetry["speed"] = self.current_speed
-            telemetry["direction"] = self.platform_direction
-            telemetry["distance"] = distance_to_center
-            telemetry["score"] = self.score_count
-
-            moving_towards = (distance_to_center > 0 and self.platform_direction == 1) or                              (distance_to_center < 0 and self.platform_direction == -1)
+            moving_towards = (distance_to_center > 0 and self.platform_direction == 1) or \
+                             (distance_to_center < 0 and self.platform_direction == -1)
 
             threshold = max(3.0, self.current_speed * click_offset_factor)
             
@@ -138,35 +126,39 @@ class StackBotEngineV10:
                     should_click = True
                     self.last_click_time = now
                     self.score_count += 1
-
-            cv2.rectangle(frame_bgr, (bx, by), (bx + bw, by + bh), (0, 255, 0), 2)
-            cv2.rectangle(frame_bgr, (px, py), (px + pw, py + ph), (255, 0, 0), 2)
-            cv2.circle(frame_bgr, (int(base_center_x), int(by + bh/2)), 4, (0, 0, 255), -1)
+                    telemetry["score"] = self.score_count
         else:
             self.lost_frames_count += 1
             if self.lost_frames_count > 15:
                 telemetry["status"] = "Поиск платформы..."
 
-        return frame_bgr, should_click, telemetry
+        return should_click, telemetry
 
 
-class StackBotAppV10:
-    """Интерфейс Stack Bot v1.0.4 с интерактивной зоной захвата."""
+class StackBotFloatingPanel:
+    """Компактная плавающая мини-панель управления v1.0.5."""
     def __init__(self, root):
         self.root = root
-        self.root.title("Stack Bot v1.0.4 — Stable Crop Edition")
-        self.root.geometry("980x720")
-        self.root.minsize(850, 600)
+        self.root.title("StackBot Overlay")
+        
+        # Делаем окно поверх всех окон, компактным без рамки Windows (или с минимальной)
+        self.root.wm_attributes("-topmost", True)
+        
+        # Располагаем в правом нижнем углу экрана
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        panel_w, panel_h = 280, 210
+        pos_x = screen_w - panel_w - 40
+        pos_y = screen_h - panel_h - 100
+        self.root.geometry(f"{panel_w}x{panel_h}+{pos_x}+{pos_y}")
+        self.root.resizable(False, False)
 
         self.engine = StackBotEngineV10()
         self.is_running = False
         self.running_loop = True
 
-        self.capture_area = {"top": 150, "left": 150, "width": 450, "height": 650}
-        self.offset_var = tk.DoubleVar(value=0.6)
+        self.capture_area = {"top": 150, "left": 150, "width": 400, "height": 550}
         
-        self.photo = None
-
         self.build_ui()
         self.bind_hotkeys()
 
@@ -174,51 +166,34 @@ class StackBotAppV10:
         self.worker_thread.start()
 
     def build_ui(self):
-        main_pane = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        main_pane.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        style = ttk.Style()
+        style.theme_use('clam')
 
-        left_frame = ttk.Frame(main_pane, padding="10")
-        main_pane.add(left_frame, weight=1)
+        main_frame = ttk.Frame(self.root, padding="8")
+        main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(left_frame, text="Stack Bot v1.0.4", font=("Segoe UI", 14, "bold"))
-        title_lbl.pack(anchor=tk.W, pady=(0, 10))
+        # Заголовок
+        title_lbl = ttk.Label(main_frame, text="Stack Bot v1.0.5 (Overlay)", font=("Segoe UI", 9, "bold"))
+        title_lbl.pack(anchor=tk.W, pady=(0, 4))
 
-        self.btn_toggle = ttk.Button(left_frame, text="Старт Бот (F6)", command=self.toggle_bot)
-        self.btn_toggle.pack(fill=tk.X, pady=5)
+        # Кнопка старта
+        self.btn_toggle = ttk.Button(main_frame, text="Старт Бот (F6)", command=self.toggle_bot)
+        self.btn_toggle.pack(fill=tk.X, pady=3)
 
-        ttk.Button(left_frame, text="Выделить область мышкой", command=self.start_visual_calibration).pack(fill=tk.X, pady=5)
+        # Кнопка калибровки
+        ttk.Button(main_frame, text="Выделить область мышкой", command=self.start_visual_calibration).pack(fill=tk.X, pady=3)
 
+        # Статус
         self.status_var = tk.StringVar(value="Статус: Остановлен")
-        status_lbl = ttk.Label(left_frame, textvariable=self.status_var, font=("Segoe UI", 10, "bold"), foreground="darkgreen")
-        status_lbl.pack(anchor=tk.W, pady=10)
+        self.status_lbl = ttk.Label(main_frame, textvariable=self.status_var, font=("Segoe UI", 9, "bold"), foreground="darkgreen")
+        self.status_lbl.pack(anchor=tk.W, pady=(5, 2))
 
-        settings_group = ttk.LabelFrame(left_frame, text=" Тонкая настройка ", padding="10")
-        settings_group.pack(fill=tk.X, pady=5)
+        # Счетчик этажей
+        self.score_var = tk.StringVar(value="Этажей построено: 0")
+        ttk.Label(main_frame, textvariable=self.score_var, font=("Consolas", 9)).pack(anchor=tk.W, pady=2)
 
-        ttk.Label(settings_group, text="Коэффициент упреждения:").pack(anchor=tk.W)
-        offset_slider = ttk.Scale(settings_group, from_=0.2, to=1.2, variable=self.offset_var, orient=tk.HORIZONTAL)
-        offset_slider.pack(fill=tk.X, pady=5)
-
-        telemetry_group = ttk.LabelFrame(left_frame, text=" Телеметрия ", padding="10")
-        telemetry_group.pack(fill=tk.X, pady=10)
-
-        self.lbl_telemetry = ttk.Label(
-            telemetry_group, 
-            text="Этажей построено: 0\nПлатформа X: --\nОснование X: --\nДистанция: --\nСкорость: -- px/f\nСостояние: Ожидание", 
-            font=("Consolas", 9),
-            justify=tk.LEFT
-        )
-        self.lbl_telemetry.pack(anchor=tk.W)
-
-        help_group = ttk.LabelFrame(left_frame, text=" Горячие клавиши ", padding="10")
-        help_group.pack(fill=tk.X, pady=5)
-        ttk.Label(help_group, text="F6 — Старт / Пауза\nEsc — Аварийный стоп", font=("Segoe UI", 9)).pack(anchor=tk.W)
-
-        right_frame = ttk.LabelFrame(main_pane, text=" Игровой монитор области ", padding="5")
-        main_pane.add(right_frame, weight=3)
-
-        self.canvas = tk.Canvas(right_frame, bg="black")
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        # Подсказка по горячим клавишам
+        ttk.Label(main_frame, text="F6 — Старт/Пауза | Esc — Стоп", font=("Segoe UI", 8), foreground="gray").pack(anchor=tk.W, pady=(4, 0))
 
     def bind_hotkeys(self):
         try:
@@ -231,15 +206,18 @@ class StackBotAppV10:
         self.is_running = not self.is_running
         if self.is_running:
             self.status_var.set("Статус: РАБОТАЕТ")
+            self.status_lbl.config(foreground="blue")
             self.btn_toggle.config(text="Пауза Бот (F6)")
         else:
             self.status_var.set("Статус: Пауза")
+            self.status_lbl.config(foreground="darkgreen")
             self.btn_toggle.config(text="Старт Бот (F6)")
 
     def emergency_stop(self):
         if self.is_running:
             self.is_running = False
-            self.status_var.set("Статус: АВАРИЙНЫЙ СТОП (Esc)")
+            self.status_var.set("Статус: СТОП")
+            self.status_lbl.config(foreground="red")
             self.btn_toggle.config(text="Старт Бот (F6)")
 
     def start_visual_calibration(self):
@@ -275,7 +253,7 @@ class StackBotAppV10:
 
             if w > 30 and h > 30:
                 self.capture_area = {"top": y1, "left": x1, "width": w, "height": h}
-                messagebox.showinfo("Успех", f"Область зафиксирована:\nX: {x1}, Y: {y1}, W: {w}, H: {h}")
+                messagebox.showinfo("Успех", f"Область сохранена:\nX: {x1}, Y: {y1}, W: {w}, H: {h}")
             else:
                 messagebox.showwarning("Warning", "Area is too small! Please select a larger region.")
 
@@ -295,14 +273,12 @@ class StackBotAppV10:
                     frame = np.array(screenshot)
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
-                    current_offset = self.offset_var.get()
-                    processed_frame, should_click, telemetry = self.engine.process_frame(frame_bgr, current_offset)
+                    should_click, telemetry = self.engine.process_frame(frame_bgr)
 
                     if self.is_running and should_click and telemetry["status"] != "Поиск платформы...":
                         pyautogui.click()
 
-                    self.update_telemetry(telemetry)
-                    self.render_canvas(processed_frame)
+                    self.score_var.set(f"Этажей построено: {telemetry['score']}")
 
                 except Exception as e:
                     print(f"[Capture Error]: {e}")
@@ -310,37 +286,6 @@ class StackBotAppV10:
                 dt = time.time() - t0
                 if dt < 0.02:
                     time.sleep(0.02 - dt)
-
-    def update_telemetry(self, t):
-        score = t['score']
-        p_x = f"{t['platform_x']:.1f}" if t['platform_x'] is not None else "--"
-        b_x = f"{t['base_x']:.1f}" if t['base_x'] is not None else "--"
-        dist = f"{t['distance']:.1f}" if t['distance'] is not None else "--"
-        spd = f"{t['speed']:.1f}"
-        status = t['status']
-
-        text = (f"Этажей построено: {score}\n"
-                f"Платформа X:      {p_x}\n"
-                f"Основание X:      {b_x}\n"
-                f"Дистанция:        {dist}\n"
-                f"Скорость:         {spd} px/f\n"
-                f"Состояние:        {status}")
-        self.lbl_telemetry.config(text=text)
-
-    def render_canvas(self, frame_bgr):
-        if frame_bgr is None:
-            return
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(frame_rgb)
-
-        cw = self.canvas.winfo_width()
-        ch = self.canvas.winfo_height()
-
-        if cw > 10 and ch > 10:
-            img = img.resize((cw, ch), Image.Resampling.LANCZOS)
-
-        self.photo = ImageTk.PhotoImage(image=img)
-        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
 
     def on_close(self):
         self.running_loop = False
@@ -353,6 +298,6 @@ class StackBotAppV10:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = StackBotAppV10(root)
+    app = StackBotFloatingPanel(root)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
     root.mainloop()
