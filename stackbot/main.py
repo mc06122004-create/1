@@ -1,6 +1,6 @@
 """
 Stack Bot — Автоматический бот для браузерной игры Stack ("Башенки")
-Версия: 1.1.5 (Ultra-Stable Non-Flicker Edition)
+Версия: 1.1.6 (Predictive Perfect Edge-Match Edition)
 Платформа: Windows 10 / 11 (x64)
 """
 
@@ -20,12 +20,13 @@ pyautogui.PAUSE = 0.0
 pyautogui.FAILSAFE = False
 
 
-class StackBotEngineV115:
-    """Сверхстабильный движок без ложных срабатываний."""
+class StackBotEngineV116:
+    """Интеллектуальный движок с предсказанием скорости и безупречным кликом."""
     def __init__(self):
         self.score_count = 0
         self.last_click_time = 0
-        self.last_mx = None
+        self.prev_m_center = None
+        self.velocity = 0.0
 
     def process_frame(self, frame_bgr):
         if frame_bgr is None or frame_bgr.size == 0:
@@ -42,14 +43,14 @@ class StackBotEngineV115:
         rectangles = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 180:
+            if area < 150:
                 continue
             x, y, w, h = cv2.boundingRect(cnt)
             if w > h * 1.1:
                 rectangles.append((x, y, w, h))
 
         should_click = False
-        status_text = "Ожидание блока..."
+        status_text = "Поиск блоков..."
 
         if len(rectangles) >= 2:
             rectangles.sort(key=lambda r: r[1])
@@ -60,22 +61,37 @@ class StackBotEngineV115:
             mx, my, mw, mh = moving
             bx, by, bw, bh = base
 
-            if by >= my + mh - 8 and abs(mw - bw) < bw * 0.5:
+            if by >= my + mh - 10 and abs(mw - bw) < bw * 0.6:
                 m_center = mx + mw / 2.0
                 b_center = bx + bw / 2.0
 
-                # Рисуем контуры для контроля
+                # Расчет скорости движения платформы для упреждения
+                if self.prev_m_center is not None:
+                    self.velocity = m_center - self.prev_m_center
+                self.prev_m_center = m_center
+
+                # Рисуем контуры
                 cv2.rectangle(debug_frame, (bx, by), (bx + bw, by + bh), (0, 255, 0), 2)
                 cv2.rectangle(debug_frame, (mx, my), (mx + mw, my + mh), (255, 150, 0), 2)
 
-                diff = abs(b_center - m_center)
-                status_text = f"Смещение: {diff:.1f}px"
+                # Предсказываем позицию на следующий кадр с учетом скорости
+                predicted_m_center = m_center + self.velocity
+                diff = abs(b_center - predicted_m_center)
+                
+                status_text = f"Смещение: {diff:.1f}px | Скорость: {self.velocity:.1f}"
 
                 now = time.time()
-                # Защита от дребезга и повторных кликов на одном этаже
-                if (now - self.last_click_time) > 0.3:
-                    # Идеальное совпадение центров с минимальным допуском
-                    if diff <= 1.2:
+                # Защита от дребезга, но с быстрым откликом
+                if (now - self.last_click_time) > 0.22:
+                    # Идеальное условие: с учетом упреждения скорость сходится в пределах 2.0 пикселей
+                    if diff <= 2.0:
+                        should_click = True
+                        self.last_click_time = now
+                        self.score_count += 1
+                
+                # Защита от зависания (если платформа долго едет и не кликнуло — принудительный клик по центру)
+                elif (now - self.last_click_time) > 1.2:
+                    if abs(b_center - m_center) <= 4.0:
                         should_click = True
                         self.last_click_time = now
                         self.score_count += 1
@@ -86,11 +102,11 @@ class StackBotEngineV115:
 class StackBotVisualApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("StackBot v1.1.5")
+        self.root.title("StackBot v1.1.6 — Predictive")
         self.root.geometry("440x560")
         self.root.wm_attributes("-topmost", True)
         
-        self.engine = StackBotEngineV115()
+        self.engine = StackBotEngineV116()
         self.is_running = False
         self.running_loop = True
 
@@ -101,18 +117,16 @@ class StackBotVisualApp:
         self.build_ui()
         self.bind_hotkeys()
 
-        # Поток захвата экрана
         self.worker_thread = threading.Thread(target=self.capture_loop, daemon=True)
         self.worker_thread.start()
 
-        # Отдельный плавный поток отрисовки интерфейса (убирает мигание)
         self.update_gui_loop()
 
     def build_ui(self):
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.5 (Non-Flicker)", font=("Segoe UI", 10, "bold"))
+        title_lbl = ttk.Label(main_frame, text="StackBot v1.1.6 (Predictive Match)", font=("Segoe UI", 10, "bold"))
         title_lbl.pack(anchor=tk.W, pady=(0, 5))
 
         btn_frame = ttk.Frame(main_frame)
@@ -130,7 +144,7 @@ class StackBotVisualApp:
         self.score_var = tk.StringVar(value="Этажей построено: 0")
         ttk.Label(main_frame, textvariable=self.score_var, font=("Consolas", 10, "bold")).pack(anchor=tk.W, pady=2)
 
-        preview_frame = ttk.LabelFrame(main_frame, text=" Монитор стабильности ", padding="5")
+        preview_frame = ttk.LabelFrame(main_frame, text=" Монитор предсказания граней ", padding="5")
         preview_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
         self.canvas = tk.Canvas(preview_frame, bg="black", highlightthickness=0)
@@ -232,7 +246,6 @@ class StackBotVisualApp:
                     time.sleep(0.015 - dt)
 
     def update_gui_loop(self):
-        """Плавное обновление интерфейса без мерцания раз в 30 мс."""
         if self.running_loop:
             if self.latest_frame is not None:
                 try:
